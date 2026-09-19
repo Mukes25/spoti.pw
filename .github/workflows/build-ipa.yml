@@ -40,10 +40,51 @@ jobs:
           python3 -m pip install --break-system-packages git+https://github.com/asdfzxcvbn/pyzule-rw.git
 
       - name: Download IPA
+        env:
+          IPA_URL: ${{ inputs.ipa_url }}
         run: |
+          set -euo pipefail
           mkdir -p ipa
-          curl -fsSL "${{ inputs.ipa_url }}" -o ipa/spotify.ipa
-          case "$(file --mime-type -b ipa/spotify.ipa)" in application/zip|application/x-ios-app) ;; *) echo "::error::Not an IPA"; exit 1 ;; esac
+
+          add_download_param() {
+            local url="$1"
+            if [[ "$url" == *"?"* ]]; then
+              printf '%s&download=1' "$url"
+            else
+              printf '%s?download=1' "$url"
+            fi
+          }
+
+          echo "Downloading IPA from: ${IPA_URL}"
+
+          SUCCESS=0
+          for url in "${IPA_URL}" "$(add_download_param "${IPA_URL}")"; do
+            echo "Trying: ${url}"
+            if curl -fL --retry 5 --retry-delay 2 --connect-timeout 20 \
+              -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" \
+              -H "Accept: application/octet-stream,*/*;q=0.1" \
+              -H "Accept-Language: en-US,en;q=0.9" \
+              "$url" -o ipa/spotify.ipa; then
+              SUCCESS=1
+              break
+            fi
+          done
+
+          if [ "$SUCCESS" -ne 1 ] || [ ! -s ipa/spotify.ipa ]; then
+            echo "::error::IPA download failed. Ensure the URL is a direct file link and not a landing page or protected download site."
+            ls -l ipa || true
+            exit 1
+          fi
+
+          case "$(file --mime-type -b ipa/spotify.ipa)" in
+            application/zip|application/x-ios-app)
+              ;;
+            *)
+              echo "::error::Downloaded file is not an IPA."
+              file ipa/spotify.ipa || true
+              exit 1
+              ;;
+          esac
 
       - run: make release
 
